@@ -21,9 +21,11 @@ package org.apache.parquet.hadoop;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
+import java.util.PrimitiveIterator;
 import java.util.Set;
+import java.util.stream.LongStream;
 
 import org.apache.hadoop.conf.Configuration;
 
@@ -47,7 +49,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static java.lang.String.format;
-import static org.apache.parquet.Preconditions.checkNotNull;
 import static org.apache.parquet.hadoop.ParquetInputFormat.RECORD_FILTERING_ENABLED;
 import static org.apache.parquet.hadoop.ParquetInputFormat.STRICT_TYPE_CHECKING;
 
@@ -70,6 +71,8 @@ class InternalParquetRecordReader<T> {
   private long current = 0;
   private int currentBlock = -1;
   private ParquetFileReader reader;
+  private long currentRowIdx = -1;
+  private PrimitiveIterator.OfLong rowIdxInFileItr;
   private org.apache.parquet.io.RecordReader<T> recordReader;
   private boolean strictTypeChecking;
 
@@ -87,7 +90,7 @@ class InternalParquetRecordReader<T> {
    */
   public InternalParquetRecordReader(ReadSupport<T> readSupport, Filter filter) {
     this.readSupport = readSupport;
-    this.filter = checkNotNull(filter, "filter");
+    this.filter = filter == null ? FilterCompat.NOOP : filter;
   }
 
   /**
@@ -128,6 +131,7 @@ class InternalParquetRecordReader<T> {
       if (pages == null) {
         throw new IOException("expecting more rows but reached last block. Read " + current + " out of " + total);
       }
+      resetRowIndexIterator(pages);
       long timeSpentReading = System.currentTimeMillis() - t0;
       totalTimeSpentReadingBytes += timeSpentReading;
       BenchmarkCounter.incrementTime(timeSpentReading);
@@ -180,12 +184,14 @@ class InternalParquetRecordReader<T> {
     this.columnIOFactory = new ColumnIOFactory(parquetFileMetadata.getCreatedBy());
     this.requestedSchema = readContext.getRequestedSchema();
     this.columnCount = requestedSchema.getPaths().size();
+    // Setting the projection schema before running any filtering (e.g. getting filtered record count)
+    // because projection impacts filtering
+    reader.setRequestedSchema(requestedSchema);
     this.recordConverter = readSupport.prepareForRead(conf, fileMetadata, fileSchema, readContext);
     this.strictTypeChecking = options.isEnabled(STRICT_TYPE_CHECKING, true);
     this.total = reader.getFilteredRecordCount();
     this.unmaterializableRecordCounter = new UnmaterializableRecordCounter(options, total);
     this.filterRecords = options.useRecordFilter();
-    reader.setRequestedSchema(requestedSchema);
     LOG.info("RecordReader initialized will read a total of {} records.", total);
   }
 
@@ -201,13 +207,15 @@ class InternalParquetRecordReader<T> {
     this.columnIOFactory = new ColumnIOFactory(parquetFileMetadata.getCreatedBy());
     this.requestedSchema = readContext.getRequestedSchema();
     this.columnCount = requestedSchema.getPaths().size();
+    // Setting the projection schema before running any filtering (e.g. getting filtered record count)
+    // because projection impacts filtering
+    reader.setRequestedSchema(requestedSchema);
     this.recordConverter = readSupport.prepareForRead(
         configuration, fileMetadata, fileSchema, readContext);
     this.strictTypeChecking = configuration.getBoolean(STRICT_TYPE_CHECKING, true);
     this.total = reader.getFilteredRecordCount();
     this.unmaterializableRecordCounter = new UnmaterializableRecordCounter(configuration, total);
     this.filterRecords = configuration.getBoolean(RECORD_FILTERING_ENABLED, true);
-    reader.setRequestedSchema(requestedSchema);
     LOG.info("RecordReader initialized will read a total of {} records.", total);
   }
 
@@ -224,6 +232,11 @@ class InternalParquetRecordReader<T> {
 
         try {
           currentValue = recordReader.read();
+          if (rowIdxInFileItr != null && rowIdxInFileItr.hasNext()) {
+            currentRowIdx = rowIdxInFileItr.next();
+          } else {
+            currentRowIdx = -1;
+          }
         } catch (RecordMaterializationException e) {
           // this might throw, but it's fatal if it does.
           unmaterializableRecordCounter.incErrors(e);
@@ -255,13 +268,54 @@ class InternalParquetRecordReader<T> {
   }
 
   private static <K, V> Map<K, Set<V>> toSetMultiMap(Map<K, V> map) {
-    Map<K, Set<V>> setMultiMap = new HashMap<K, Set<V>>();
+    Map<K, Set<V>> setMultiMap = new HashMap<>();
     for (Map.Entry<K, V> entry : map.entrySet()) {
-      Set<V> set = new HashSet<V>();
-      set.add(entry.getValue());
-      setMultiMap.put(entry.getKey(), Collections.unmodifiableSet(set));
+      setMultiMap.put(entry.getKey(), Collections.singleton(entry.getValue()));
     }
     return Collections.unmodifiableMap(setMultiMap);
   }
 
+  /**
+   * Returns the row index of the current row. If no row has been processed or if the
+   * row index information is unavailable from the underlying @{@link PageReadStore}, returns -1.
+   */
+  public long getCurrentRowIndex() {
+    if (current == 0L || rowIdxInFileItr == null) {
+      return -1;
+    }
+    return currentRowIdx;
+  }
+
+  /**
+   * Resets the row index iterator based on the current processed row group.
+   */
+  private void resetRowIndexIterator(PageReadStore pages) {
+    Optional<Long> rowGroupRowIdxOffset = pages.getRowIndexOffset();
+    if (!rowGroupRowIdxOffset.isPresent()) {
+      this.rowIdxInFileItr = null;
+      return;
+    }
+
+    currentRowIdx = -1;
+    final PrimitiveIterator.OfLong rowIdxInRowGroupItr;
+    if (pages.getRowIndexes().isPresent()) {
+      rowIdxInRowGroupItr = pages.getRowIndexes().get();
+    } else {
+      rowIdxInRowGroupItr = LongStream.range(0, pages.getRowCount()).iterator();
+    }
+    // Adjust the row group offset in the `rowIndexWithinRowGroupIterator` iterator.
+    this.rowIdxInFileItr = new PrimitiveIterator.OfLong() {
+      public long nextLong() {
+        return rowGroupRowIdxOffset.get() + rowIdxInRowGroupItr.nextLong();
+      }
+
+      public boolean hasNext() {
+        return rowIdxInRowGroupItr.hasNext();
+      }
+
+      public Long next() {
+        return rowGroupRowIdxOffset.get() + rowIdxInRowGroupItr.next();
+      }
+    };
+  }
 }

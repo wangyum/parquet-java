@@ -151,7 +151,7 @@ public class ParquetRecordReader<T> extends RecordReader<Void, T> {
     long[] rowGroupOffsets = split.getRowGroupOffsets();
 
     // if task.side.metadata is set, rowGroupOffsets is null
-    ParquetReadOptions.Builder optionsBuilder = HadoopReadOptions.builder(configuration);
+    ParquetReadOptions.Builder optionsBuilder = HadoopReadOptions.builder(configuration, path);
     if (rowGroupOffsets != null) {
       optionsBuilder.withOffsets(rowGroupOffsets);
     } else {
@@ -205,6 +205,13 @@ public class ParquetRecordReader<T> extends RecordReader<Void, T> {
   @Override
   public boolean nextKeyValue() throws IOException, InterruptedException {
     return internalReader.nextKeyValue();
+  }
+
+  /**
+   * @return the row index of the current row. If no row has been processed, returns -1.
+   */
+  public long getCurrentRowIndex() throws IOException {
+    return internalReader.getCurrentRowIndex();
   }
 
   private ParquetInputSplit toParquetSplit(InputSplit split) throws IOException {

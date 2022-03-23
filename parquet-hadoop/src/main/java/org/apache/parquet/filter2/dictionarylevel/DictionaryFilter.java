@@ -29,6 +29,7 @@ import org.apache.parquet.filter2.predicate.Operators.*;
 import org.apache.parquet.filter2.predicate.UserDefinedPredicate;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnPath;
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,11 +39,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-
-import static org.apache.parquet.Preconditions.checkArgument;
-import static org.apache.parquet.Preconditions.checkNotNull;
-
+import java.util.function.IntFunction;
 
 /**
  * Applies filters based on the contents of column dictionaries.
@@ -54,8 +53,8 @@ public class DictionaryFilter implements FilterPredicate.Visitor<Boolean> {
   private static final boolean BLOCK_CANNOT_MATCH = true;
 
   public static boolean canDrop(FilterPredicate pred, List<ColumnChunkMetaData> columns, DictionaryPageReadStore dictionaries) {
-    checkNotNull(pred, "pred");
-    checkNotNull(columns, "columns");
+    Objects.requireNonNull(pred, "pred cannnot be null");
+    Objects.requireNonNull(columns, "columns cannnot be null");
     return pred.accept(new DictionaryFilter(columns, dictionaries));
   }
 
@@ -86,26 +85,36 @@ public class DictionaryFilter implements FilterPredicate.Visitor<Boolean> {
 
     Dictionary dict = page.getEncoding().initDictionary(col, page);
 
-    Set dictSet = new HashSet<T>();
-
-    for (int i=0; i<=dict.getMaxId(); i++) {
-      switch(meta.getType()) {
-        case BINARY: dictSet.add(dict.decodeToBinary(i));
-          break;
-        case INT32: dictSet.add(dict.decodeToInt(i));
-          break;
-        case INT64: dictSet.add(dict.decodeToLong(i));
-          break;
-        case FLOAT: dictSet.add(dict.decodeToFloat(i));
-          break;
-        case DOUBLE: dictSet.add(dict.decodeToDouble(i));
-          break;
-        default:
-          LOG.warn("Unknown dictionary type{}", meta.getType());
-      }
+    IntFunction<Object> dictValueProvider;
+    PrimitiveTypeName type = meta.getPrimitiveType().getPrimitiveTypeName();
+    switch (type) {
+    case FIXED_LEN_BYTE_ARRAY: // Same as BINARY
+    case BINARY:
+      dictValueProvider = dict::decodeToBinary;
+      break;
+    case INT32:
+      dictValueProvider = dict::decodeToInt;
+      break;
+    case INT64:
+      dictValueProvider = dict::decodeToLong;
+      break;
+    case FLOAT:
+      dictValueProvider = dict::decodeToFloat;
+      break;
+    case DOUBLE:
+      dictValueProvider = dict::decodeToDouble;
+      break;
+    default:
+      LOG.warn("Unsupported dictionary type: {}", type);
+      return null;
     }
 
-    return (Set<T>) dictSet;
+    Set<T> dictSet = new HashSet<>();
+    for (int i = 0; i <= dict.getMaxId(); i++) {
+      dictSet.add((T) dictValueProvider.apply(i));
+    }
+    
+    return dictSet;
   }
 
   @Override
@@ -178,7 +187,10 @@ public class DictionaryFilter implements FilterPredicate.Visitor<Boolean> {
 
     try {
       Set<T> dictSet = expandDictionary(meta);
-      if (dictSet != null && dictSet.size() == 1 && dictSet.contains(value)) {
+      boolean mayContainNull = (meta.getStatistics() == null
+          || !meta.getStatistics().isNumNullsSet()
+          || meta.getStatistics().getNumNulls() > 0);
+      if (dictSet != null && dictSet.size() == 1 && dictSet.contains(value) && !mayContainNull) {
         return BLOCK_CANNOT_MATCH;
       }
     } catch (IOException e) {
@@ -353,6 +365,108 @@ public class DictionaryFilter implements FilterPredicate.Visitor<Boolean> {
   }
 
   @Override
+  public <T extends Comparable<T>> Boolean visit(In<T> in) {
+    Set<T> values = in.getValues();
+
+    if (values.contains(null)) {
+      // the dictionary contains only non-null values so isn't helpful. this
+      // could check the column stats, but the StatisticsFilter is responsible
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    Column<T> filterColumn = in.getColumn();
+    ColumnChunkMetaData meta = getColumnChunk(filterColumn.getColumnPath());
+
+    if (meta == null) {
+      // the column isn't in this file so all values are null, but the value
+      // must be non-null because of the above check.
+      return BLOCK_CANNOT_MATCH;
+    }
+
+    // if the chunk has non-dictionary pages, don't bother decoding the
+    // dictionary because the row group can't be eliminated.
+    if (hasNonDictionaryPages(meta)) {
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    try {
+      Set<T> dictSet = expandDictionary(meta);
+      if (dictSet != null) {
+        return drop(dictSet, values);
+      }
+    } catch (IOException e) {
+      LOG.warn("Failed to process dictionary for filter evaluation.", e);
+    }
+    return BLOCK_MIGHT_MATCH; // cannot drop the row group based on this dictionary
+  }
+
+  private <T extends Comparable<T>> Boolean drop(Set<T> dictSet, Set<T> values) {
+    // we need to find out the smaller set to iterate through
+    Set<T> smallerSet;
+    Set<T> biggerSet;
+
+    if (values.size() < dictSet.size()) {
+      smallerSet = values;
+      biggerSet = dictSet;
+    } else {
+      smallerSet = dictSet;
+      biggerSet = values;
+    }
+
+    for (T e : smallerSet) {
+      if (biggerSet.contains(e)) {
+        // value sets intersect so rows match
+        return BLOCK_MIGHT_MATCH;
+      }
+    }
+    return BLOCK_CANNOT_MATCH;
+  }
+
+  @Override
+  public <T extends Comparable<T>> Boolean visit(NotIn<T> notIn) {
+    Set<T> values = notIn.getValues();
+
+    Column<T> filterColumn = notIn.getColumn();
+    ColumnChunkMetaData meta = getColumnChunk(filterColumn.getColumnPath());
+
+    if (values.size() == 1 && values.contains(null) && meta == null) {
+      // the predicate value is null and all rows have a null value, so the
+      // predicate is always false (null != null)
+      return BLOCK_CANNOT_MATCH;
+    }
+
+    if (values.contains(null)) {
+      // the dictionary contains only non-null values so isn't helpful. this
+      // could check the column stats, but the StatisticsFilter is responsible
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    if (meta == null) {
+      // the column isn't in this file so all values are null, but the value
+      // must be non-null because of the above check.
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    // if the chunk has non-dictionary pages, don't bother decoding the
+    // dictionary because the row group can't be eliminated.
+    if (hasNonDictionaryPages(meta)) {
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    try {
+      Set<T> dictSet = expandDictionary(meta);
+      if (dictSet != null) {
+        if (dictSet.size() > values.size()) return BLOCK_MIGHT_MATCH;
+        // ROWS_CANNOT_MATCH if no values in the dictionary that are not also in the set
+        return values.containsAll(dictSet) ? BLOCK_CANNOT_MATCH : BLOCK_MIGHT_MATCH;
+      }
+    } catch (IOException e) {
+      LOG.warn("Failed to process dictionary for filter evaluation.", e);
+    }
+    return BLOCK_MIGHT_MATCH;
+  }
+
+  @Override
   public Boolean visit(And and) {
     return and.getLeft().accept(this) || and.getRight().accept(this);
   }
@@ -376,9 +490,9 @@ public class DictionaryFilter implements FilterPredicate.Visitor<Boolean> {
     // The column is missing, thus all null. Check if the predicate keeps null.
     if (meta == null) {
       if (inverted) {
-        return udp.keep(null);
+        return udp.acceptsNullValue();
       } else {
-        return !udp.keep(null);
+        return !udp.acceptsNullValue();
       }
     }
 

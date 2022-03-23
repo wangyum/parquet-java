@@ -27,6 +27,7 @@ import org.apache.parquet.filter2.compat.FilterCompat.FilterPredicateCompat;
 import org.apache.parquet.filter2.compat.FilterCompat.NoOpFilter;
 import org.apache.parquet.filter2.compat.FilterCompat.UnboundRecordFilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate.Visitor;
+import org.apache.parquet.filter2.predicate.Operators;
 import org.apache.parquet.filter2.predicate.Operators.And;
 import org.apache.parquet.filter2.predicate.Operators.Column;
 import org.apache.parquet.filter2.predicate.Operators.Eq;
@@ -85,7 +86,7 @@ public class ColumnIndexFilter implements Visitor<RowRanges> {
           return filterPredicateCompat.getFilterPredicate()
               .accept(new ColumnIndexFilter(columnIndexStore, paths, rowCount));
         } catch (MissingOffsetIndexException e) {
-          LOGGER.warn("Unable to do filtering", e);
+          LOGGER.info(e.getMessage());
           return RowRanges.createSingle(rowCount);
         }
       }
@@ -147,16 +148,28 @@ public class ColumnIndexFilter implements Visitor<RowRanges> {
   }
 
   @Override
+  public <T extends Comparable<T>> RowRanges visit(Operators.In<T> in) {
+    boolean isNull = in.getValues().contains(null);
+    return applyPredicate(in.getColumn(), ci -> ci.visit(in), isNull ? allRows() : RowRanges.EMPTY);
+  }
+
+  @Override
+  public <T extends Comparable<T>> RowRanges visit(Operators.NotIn<T> notIn) {
+    boolean isNull = notIn.getValues().contains(null);
+    return applyPredicate(notIn.getColumn(), ci -> ci.visit(notIn), isNull ? RowRanges.EMPTY : allRows());
+  }
+
+  @Override
   public <T extends Comparable<T>, U extends UserDefinedPredicate<T>> RowRanges visit(UserDefined<T, U> udp) {
     return applyPredicate(udp.getColumn(), ci -> ci.visit(udp),
-        udp.getUserDefinedPredicate().keep(null) ? allRows() : RowRanges.EMPTY);
+        udp.getUserDefinedPredicate().acceptsNullValue() ? allRows() : RowRanges.EMPTY);
   }
 
   @Override
   public <T extends Comparable<T>, U extends UserDefinedPredicate<T>> RowRanges visit(
       LogicalNotUserDefined<T, U> udp) {
     return applyPredicate(udp.getUserDefined().getColumn(), ci -> ci.visit(udp),
-        udp.getUserDefined().getUserDefinedPredicate().keep(null) ? RowRanges.EMPTY : allRows());
+        udp.getUserDefined().getUserDefinedPredicate().acceptsNullValue() ? RowRanges.EMPTY : allRows());
   }
 
   private RowRanges applyPredicate(Column<?> column, Function<ColumnIndex, PrimitiveIterator.OfInt> func,
@@ -169,7 +182,7 @@ public class ColumnIndexFilter implements Visitor<RowRanges> {
     OffsetIndex oi = columnIndexStore.getOffsetIndex(columnPath);
     ColumnIndex ci = columnIndexStore.getColumnIndex(columnPath);
     if (ci == null) {
-      LOGGER.warn("No column index for column {} is available; Unable to filter on this column", columnPath);
+      LOGGER.info("No column index for column {} is available; Unable to filter on this column", columnPath);
       return allRows();
     }
 

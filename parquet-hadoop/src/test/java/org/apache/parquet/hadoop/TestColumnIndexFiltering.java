@@ -19,11 +19,13 @@
 package org.apache.parquet.hadoop;
 
 import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.toList;
 import static org.apache.parquet.filter2.predicate.FilterApi.and;
 import static org.apache.parquet.filter2.predicate.FilterApi.binaryColumn;
 import static org.apache.parquet.filter2.predicate.FilterApi.doubleColumn;
 import static org.apache.parquet.filter2.predicate.FilterApi.eq;
 import static org.apache.parquet.filter2.predicate.FilterApi.gtEq;
+import static org.apache.parquet.filter2.predicate.FilterApi.in;
 import static org.apache.parquet.filter2.predicate.FilterApi.longColumn;
 import static org.apache.parquet.filter2.predicate.FilterApi.lt;
 import static org.apache.parquet.filter2.predicate.FilterApi.ltEq;
@@ -33,6 +35,12 @@ import static org.apache.parquet.filter2.predicate.FilterApi.or;
 import static org.apache.parquet.filter2.predicate.FilterApi.userDefined;
 import static org.apache.parquet.filter2.predicate.LogicalInverter.invert;
 import static org.apache.parquet.hadoop.ParquetFileWriter.Mode.OVERWRITE;
+import static org.apache.parquet.schema.LogicalTypeAnnotation.stringType;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.DOUBLE;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64;
+import static org.apache.parquet.schema.Types.optional;
+import static org.apache.parquet.schema.Types.required;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -45,16 +53,25 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.parquet.column.ParquetProperties;
 import org.apache.parquet.column.ParquetProperties.WriterVersion;
+import org.apache.parquet.crypto.ColumnEncryptionProperties;
+import org.apache.parquet.crypto.DecryptionKeyRetrieverMock;
+import org.apache.parquet.crypto.FileDecryptionProperties;
+import org.apache.parquet.crypto.FileEncryptionProperties;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.compat.FilterCompat.Filter;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
@@ -64,9 +81,13 @@ import org.apache.parquet.filter2.recordlevel.PhoneBookWriter;
 import org.apache.parquet.filter2.recordlevel.PhoneBookWriter.Location;
 import org.apache.parquet.filter2.recordlevel.PhoneBookWriter.PhoneNumber;
 import org.apache.parquet.filter2.recordlevel.PhoneBookWriter.User;
+import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.example.ExampleParquetWriter;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
+import org.apache.parquet.hadoop.metadata.ColumnPath;
 import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.Types;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -85,18 +106,46 @@ public class TestColumnIndexFiltering {
   private static final Random RANDOM = new Random(42);
   private static final String[] PHONE_KINDS = { null, "mobile", "home", "work" };
   private static final List<User> DATA = Collections.unmodifiableList(generateData(10000));
-  private static final Path FILE_V1 = createTempFile();
-  private static final Path FILE_V2 = createTempFile();
+  private static final Path FILE_V1 = createTempFile(false);
+  private static final Path FILE_V2 = createTempFile(false);
+  private static final Path FILE_V1_E = createTempFile(true);
+  private static final Path FILE_V2_E = createTempFile(true);
+  private static final MessageType SCHEMA_WITHOUT_NAME = Types.buildMessage()
+      .required(INT64).named("id")
+      .optionalGroup()
+        .addField(optional(DOUBLE).named("lon"))
+        .addField(optional(DOUBLE).named("lat"))
+        .named("location")
+      .optionalGroup()
+        .repeatedGroup()
+          .addField(required(INT64).named("number"))
+          .addField(optional(BINARY).as(stringType()).named("kind"))
+          .named("phone")
+        .named("phoneNumbers")
+      .named("user_without_name");
 
-  @Parameters
+  private static final byte[] FOOTER_ENCRYPTION_KEY = "0123456789012345".getBytes();
+  private static final byte[] COLUMN_ENCRYPTION_KEY1 = "1234567890123450".getBytes();
+  private static final byte[] COLUMN_ENCRYPTION_KEY2 = "1234567890123451".getBytes();
+  private static final String FOOTER_ENCRYPTION_KEY_ID = "kf";
+  private static final String COLUMN_ENCRYPTION_KEY1_ID = "kc1";
+  private static final String COLUMN_ENCRYPTION_KEY2_ID = "kc2";
+
+  @Parameters(name = "Run {index}: isEncrypted={1}")
   public static Collection<Object[]> params() {
-    return Arrays.asList(new Object[] { FILE_V1 }, new Object[] { FILE_V2 });
+    return Arrays.asList(
+      new Object[] { FILE_V1, false /*isEncrypted*/ },
+      new Object[] { FILE_V2, false /*isEncrypted*/ },
+      new Object[] { FILE_V1_E, true /*isEncrypted*/ },
+      new Object[] { FILE_V2_E, true /*isEncrypted*/ });
   }
 
   private final Path file;
+  private final boolean isEncrypted;
 
-  public TestColumnIndexFiltering(Path file) {
+  public TestColumnIndexFiltering(Path file, boolean isEncrypted) {
     this.file = file;
+    this.isEncrypted = isEncrypted;
   }
 
   private static List<User> generateData(int rowCount) {
@@ -168,9 +217,10 @@ public class TestColumnIndexFiltering {
     return new Location(RANDOM.nextDouble() < 0.01 ? null : lat, RANDOM.nextDouble() < 0.01 ? null : lon);
   }
 
-  private static Path createTempFile() {
+  private static Path createTempFile(boolean encrypted) {
+    String suffix = encrypted ? ".parquet.encrypted" : ".parquet";
     try {
-      return new Path(Files.createTempFile("test-ci_", ".parquet").toAbsolutePath().toString());
+      return new Path(Files.createTempFile("test-ci_", suffix).toAbsolutePath().toString());
     } catch (IOException e) {
       throw new AssertionError("Unable to create temporary file", e);
     }
@@ -191,12 +241,42 @@ public class TestColumnIndexFiltering {
 
   private List<User> readUsers(Filter filter, boolean useOtherFiltering, boolean useColumnIndexFilter)
       throws IOException {
+    FileDecryptionProperties decryptionProperties = getFileDecryptionProperties();
     return PhoneBookWriter.readUsers(ParquetReader.builder(new GroupReadSupport(), file)
         .withFilter(filter)
+        .withDecryption(decryptionProperties)
         .useDictionaryFilter(useOtherFiltering)
         .useStatsFilter(useOtherFiltering)
         .useRecordFilter(useOtherFiltering)
-        .useColumnIndexFilter(useColumnIndexFilter));
+        .useColumnIndexFilter(useColumnIndexFilter), true);
+  }
+
+  private List<User> readUsersWithProjection(Filter filter, MessageType schema, boolean useOtherFiltering,
+                                             boolean useColumnIndexFilter) throws IOException {
+    FileDecryptionProperties decryptionProperties = getFileDecryptionProperties();
+    return PhoneBookWriter.readUsers(ParquetReader.builder(new GroupReadSupport(), file)
+        .withFilter(filter)
+        .withDecryption(decryptionProperties)
+        .useDictionaryFilter(useOtherFiltering)
+        .useStatsFilter(useOtherFiltering)
+        .useRecordFilter(useOtherFiltering)
+        .useColumnIndexFilter(useColumnIndexFilter)
+        .set(ReadSupport.PARQUET_READ_SCHEMA, schema.toString()), true);
+  }
+
+  private FileDecryptionProperties getFileDecryptionProperties() {
+    FileDecryptionProperties decryptionProperties = null;
+    if (isEncrypted) {
+      DecryptionKeyRetrieverMock decryptionKeyRetrieverMock = new DecryptionKeyRetrieverMock()
+        .putKey(FOOTER_ENCRYPTION_KEY_ID, FOOTER_ENCRYPTION_KEY)
+        .putKey(COLUMN_ENCRYPTION_KEY1_ID, COLUMN_ENCRYPTION_KEY1)
+        .putKey(COLUMN_ENCRYPTION_KEY2_ID, COLUMN_ENCRYPTION_KEY2);
+
+      decryptionProperties = FileDecryptionProperties.builder()
+        .withKeyRetriever(decryptionKeyRetrieverMock)
+        .build();
+    }
+    return decryptionProperties;
   }
 
   // Assumes that both lists are in the same order
@@ -236,27 +316,63 @@ public class TestColumnIndexFiltering {
   }
 
   @BeforeClass
-  public static void createFile() throws IOException {
+  public static void createFiles() throws IOException {
+    writePhoneBookToFile(FILE_V1, WriterVersion.PARQUET_1_0, null);
+    writePhoneBookToFile(FILE_V2, WriterVersion.PARQUET_2_0, null);
+    FileEncryptionProperties encryptionProperties = getFileEncryptionProperties();
+    writePhoneBookToFile(FILE_V1_E, ParquetProperties.WriterVersion.PARQUET_1_0, encryptionProperties);
+    writePhoneBookToFile(FILE_V2_E, ParquetProperties.WriterVersion.PARQUET_2_0, encryptionProperties);
+  }
+
+  private static void writePhoneBookToFile(Path file, WriterVersion parquetVersion,
+                                           FileEncryptionProperties encryptionProperties) throws IOException {
     int pageSize = DATA.size() / 10;     // Ensure that several pages will be created
     int rowGroupSize = pageSize * 6 * 5; // Ensure that there are more row-groups created
-    PhoneBookWriter.write(ExampleParquetWriter.builder(FILE_V1)
+
+    PhoneBookWriter.write(ExampleParquetWriter.builder(file)
         .withWriteMode(OVERWRITE)
         .withRowGroupSize(rowGroupSize)
         .withPageSize(pageSize)
-        .withWriterVersion(WriterVersion.PARQUET_1_0),
-        DATA);
-    PhoneBookWriter.write(ExampleParquetWriter.builder(FILE_V2)
-        .withWriteMode(OVERWRITE)
-        .withRowGroupSize(rowGroupSize)
-        .withPageSize(pageSize)
-        .withWriterVersion(WriterVersion.PARQUET_2_0),
-        DATA);
+        .withEncryption(encryptionProperties)
+        .withWriterVersion(parquetVersion),
+      DATA);
+  }
+
+  private static FileEncryptionProperties getFileEncryptionProperties() {
+    ColumnEncryptionProperties columnProperties1 = ColumnEncryptionProperties
+      .builder("id")
+      .withKey(COLUMN_ENCRYPTION_KEY1)
+      .withKeyID(COLUMN_ENCRYPTION_KEY1_ID)
+      .build();
+
+    ColumnEncryptionProperties columnProperties2 = ColumnEncryptionProperties
+      .builder("name")
+      .withKey(COLUMN_ENCRYPTION_KEY2)
+      .withKeyID(COLUMN_ENCRYPTION_KEY2_ID)
+      .build();
+    Map<ColumnPath, ColumnEncryptionProperties> columnPropertiesMap = new HashMap<>();
+
+    columnPropertiesMap.put(columnProperties1.getPath(), columnProperties1);
+    columnPropertiesMap.put(columnProperties2.getPath(), columnProperties2);
+
+    FileEncryptionProperties encryptionProperties = FileEncryptionProperties.builder(FOOTER_ENCRYPTION_KEY)
+      .withFooterKeyID(FOOTER_ENCRYPTION_KEY_ID)
+      .withEncryptedColumns(columnPropertiesMap)
+      .build();
+
+    return encryptionProperties;
+  }
+
+  private static void deleteFile(Path file) throws IOException {
+    file.getFileSystem(new Configuration()).delete(file, false);
   }
 
   @AfterClass
-  public static void deleteFile() throws IOException {
-    FILE_V1.getFileSystem(new Configuration()).delete(FILE_V1, false);
-    FILE_V2.getFileSystem(new Configuration()).delete(FILE_V2, false);
+  public static void deleteFiles() throws IOException {
+    deleteFile(FILE_V1);
+    deleteFile(FILE_V2);
+    deleteFile(FILE_V1_E);
+    deleteFile(FILE_V2_E);
   }
 
   @Test
@@ -264,12 +380,48 @@ public class TestColumnIndexFiltering {
     assertCorrectFiltering(
         record -> record.getId() == 1234,
         eq(longColumn("id"), 1234l));
+
+    Set<Long> idSet = new HashSet<>();
+    idSet.add(1234l);
+    idSet.add(5678l);
+    idSet.add(1357l);
+    idSet.add(111l);
+    idSet.add(6666l);
+    idSet.add(2l);
+    idSet.add(2468l);
+
+    assertCorrectFiltering(
+      record -> (record.getId() == 1234 || record.getId() == 5678 || record.getId() == 1357 ||
+        record.getId() == 111 || record.getId() == 6666 || record.getId() == 2 || record.getId() == 2468),
+      in(longColumn("id"), idSet)
+    );
+
     assertCorrectFiltering(
         record -> "miller".equals(record.getName()),
         eq(binaryColumn("name"), Binary.fromString("miller")));
+
+    Set<Binary> nameSet = new HashSet<>();
+    nameSet.add(Binary.fromString("anderson"));
+    nameSet.add(Binary.fromString("miller"));
+    nameSet.add(Binary.fromString("thomas"));
+    nameSet.add(Binary.fromString("williams"));
+
+    assertCorrectFiltering(
+      record -> ("anderson".equals(record.getName()) || "miller".equals(record.getName()) ||
+        "thomas".equals(record.getName()) || "williams".equals(record.getName())),
+      in(binaryColumn("name"), nameSet)
+    );
+
     assertCorrectFiltering(
         record -> record.getName() == null,
         eq(binaryColumn("name"), null));
+
+    Set<Binary> nullSet = new HashSet<>();
+    nullSet.add(null);
+
+    assertCorrectFiltering(
+      record -> record.getName() == null,
+      in(binaryColumn("name"), nullSet));
   }
 
   @Test
@@ -277,6 +429,10 @@ public class TestColumnIndexFiltering {
     // Column index filtering with no-op filter
     assertEquals(DATA, readUsers(FilterCompat.NOOP, false));
     assertEquals(DATA, readUsers(FilterCompat.NOOP, true));
+
+    // Column index filtering with null filter
+    assertEquals(DATA, readUsers((Filter) null, false));
+    assertEquals(DATA, readUsers((Filter) null, true));
 
     // Column index filtering turned off
     assertEquals(DATA.stream().filter(user -> user.getId() == 1234).collect(Collectors.toList()),
@@ -385,7 +541,9 @@ public class TestColumnIndexFiltering {
 
     @Override
     public boolean keep(Long value) {
-      return value != null && value % divisor == 0;
+      // Deliberately not checking for null to verify the handling of NPE
+      // Implementors shall always checks the value for null and return accordingly
+      return value % divisor == 0;
     }
 
     @Override
@@ -438,5 +596,22 @@ public class TestColumnIndexFiltering {
         record -> record.getId() == 1234,
         or(eq(longColumn("id"), 1234l),
             userDefined(longColumn("not-existing-long"), new IsDivisibleBy(1))));
+  }
+
+  @Test
+  public void testFilteringWithProjection() throws IOException {
+    // All rows shall be retrieved because all values in column 'name' shall be handled as null values
+    assertEquals(
+        DATA.stream().map(user -> user.cloneWithName(null)).collect(toList()),
+        readUsersWithProjection(FilterCompat.get(eq(binaryColumn("name"), null)), SCHEMA_WITHOUT_NAME, true, true));
+
+    // Column index filter shall drop all pages because all values in column 'name' shall be handled as null values
+    assertEquals(
+        emptyList(),
+        readUsersWithProjection(FilterCompat.get(notEq(binaryColumn("name"), null)), SCHEMA_WITHOUT_NAME, false, true));
+    assertEquals(
+        emptyList(),
+        readUsersWithProjection(FilterCompat.get(userDefined(binaryColumn("name"), NameStartsWithVowel.class)),
+            SCHEMA_WITHOUT_NAME, false, true));
   }
 }

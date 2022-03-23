@@ -83,40 +83,29 @@ public class TestStringBehavior {
     file.deleteOnExit();
 
     parquetFile = new Path(file.getPath());
-    ParquetWriter<GenericRecord> parquet = AvroParquetWriter
+    try(ParquetWriter<GenericRecord> parquet = AvroParquetWriter
         .<GenericRecord>builder(parquetFile)
         .withDataModel(GenericData.get())
         .withSchema(SCHEMA)
-        .build();
-
-    try {
+        .build()) {
       parquet.write(record);
-    } finally {
-      parquet.close();
     }
 
     avroFile = temp.newFile("avro");
     avroFile.delete();
     avroFile.deleteOnExit();
-    DataFileWriter<GenericRecord> avro = new DataFileWriter<GenericRecord>(
-        new GenericDatumWriter<GenericRecord>(SCHEMA)).create(SCHEMA, avroFile);
-
-    try {
+    try(DataFileWriter<GenericRecord> avro = new DataFileWriter<GenericRecord>(
+      new GenericDatumWriter<>(SCHEMA)).create(SCHEMA, avroFile)) {
       avro.append(record);
-    } finally {
-      avro.close();
     }
   }
 
   @Test
   public void testGeneric() throws IOException {
     GenericRecord avroRecord;
-    DataFileReader<GenericRecord> avro = new DataFileReader<GenericRecord>(
-        avroFile, new GenericDatumReader<GenericRecord>(SCHEMA));
-    try {
+    try(DataFileReader<GenericRecord> avro = new DataFileReader<>(
+      avroFile, new GenericDatumReader<>(SCHEMA))) {
       avroRecord = avro.next();
-    } finally {
-      avro.close();
     }
 
     GenericRecord parquetRecord;
@@ -124,14 +113,11 @@ public class TestStringBehavior {
     conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
     AvroReadSupport.setAvroDataSupplier(conf, GenericDataSupplier.class);
     AvroReadSupport.setAvroReadSchema(conf, SCHEMA);
-    ParquetReader<GenericRecord> parquet = AvroParquetReader
+    try(ParquetReader<GenericRecord> parquet = AvroParquetReader
         .<GenericRecord>builder(parquetFile)
         .withConf(conf)
-        .build();
-    try {
+        .build()) {
       parquetRecord = parquet.read();
-    } finally {
-      parquet.close();
     }
 
     Assert.assertEquals("Avro default string class should be Utf8",
@@ -169,14 +155,10 @@ public class TestStringBehavior {
   @Test
   public void testSpecific() throws IOException {
     org.apache.parquet.avro.StringBehaviorTest avroRecord;
-    DataFileReader<org.apache.parquet.avro.StringBehaviorTest> avro =
-        new DataFileReader<org.apache.parquet.avro.StringBehaviorTest>(avroFile,
-            new SpecificDatumReader<org.apache.parquet.avro.StringBehaviorTest>(
-                org.apache.parquet.avro.StringBehaviorTest.getClassSchema()));
-    try {
+    try(DataFileReader<org.apache.parquet.avro.StringBehaviorTest> avro =
+          new DataFileReader<>(avroFile, new SpecificDatumReader<>(
+            org.apache.parquet.avro.StringBehaviorTest.getClassSchema()))) {
       avroRecord = avro.next();
-    } finally {
-      avro.close();
     }
 
     org.apache.parquet.avro.StringBehaviorTest parquetRecord;
@@ -185,48 +167,45 @@ public class TestStringBehavior {
     AvroReadSupport.setAvroDataSupplier(conf, SpecificDataSupplier.class);
     AvroReadSupport.setAvroReadSchema(conf,
         org.apache.parquet.avro.StringBehaviorTest.getClassSchema());
-    ParquetReader<org.apache.parquet.avro.StringBehaviorTest> parquet =
+    try(ParquetReader<org.apache.parquet.avro.StringBehaviorTest> parquet =
         AvroParquetReader
             .<org.apache.parquet.avro.StringBehaviorTest>builder(parquetFile)
             .withConf(conf)
-            .build();
-    try {
+            .build()) {
       parquetRecord = parquet.read();
-    } finally {
-      parquet.close();
     }
 
     Assert.assertEquals("Avro default string class should be String",
-        Utf8.class, avroRecord.default_class.getClass());
+        Utf8.class, avroRecord.getDefaultClass().getClass());
     Assert.assertEquals("Parquet default string class should be String",
-        Utf8.class, parquetRecord.default_class.getClass());
+        Utf8.class, parquetRecord.getDefaultClass().getClass());
 
     Assert.assertEquals("Avro avro.java.string=String class should be String",
-        String.class, avroRecord.string_class.getClass());
+        String.class, avroRecord.getStringClass().getClass());
     Assert.assertEquals("Parquet avro.java.string=String class should be String",
-        String.class, parquetRecord.string_class.getClass());
+        String.class, parquetRecord.getStringClass().getClass());
 
     Assert.assertEquals("Avro stringable class should be BigDecimal",
-        BigDecimal.class, avroRecord.stringable_class.getClass());
+        BigDecimal.class, avroRecord.getStringableClass().getClass());
     Assert.assertEquals("Parquet stringable class should be BigDecimal",
-        BigDecimal.class, parquetRecord.stringable_class.getClass());
+        BigDecimal.class, parquetRecord.getStringableClass().getClass());
     Assert.assertEquals("Should have the correct BigDecimal value",
-        BIG_DECIMAL, parquetRecord.stringable_class);
+        BIG_DECIMAL, parquetRecord.getStringableClass());
 
     Assert.assertEquals("Avro map default string class should be String",
-        Utf8.class, keyClass(avroRecord.default_map));
+        Utf8.class, keyClass(avroRecord.getDefaultMap()));
     Assert.assertEquals("Parquet map default string class should be String",
-        Utf8.class, keyClass(parquetRecord.default_map));
+        Utf8.class, keyClass(parquetRecord.getDefaultMap()));
 
     Assert.assertEquals("Avro map avro.java.string=String class should be String",
-        String.class, keyClass(avroRecord.string_map));
+        String.class, keyClass(avroRecord.getStringMap()));
     Assert.assertEquals("Parquet map avro.java.string=String class should be String",
-        String.class, keyClass(parquetRecord.string_map));
+        String.class, keyClass(parquetRecord.getStringMap()));
 
     Assert.assertEquals("Avro map stringable class should be BigDecimal",
-        BigDecimal.class, keyClass(avroRecord.stringable_map));
+        BigDecimal.class, keyClass(avroRecord.getStringableMap()));
     Assert.assertEquals("Parquet map stringable class should be BigDecimal",
-        BigDecimal.class, keyClass(parquetRecord.stringable_map));
+        BigDecimal.class, keyClass(parquetRecord.getStringableMap()));
   }
 
   @Test
@@ -235,12 +214,9 @@ public class TestStringBehavior {
         .getSchema(ReflectRecord.class);
 
     ReflectRecord avroRecord;
-    DataFileReader<ReflectRecord> avro = new DataFileReader<ReflectRecord>(
-        avroFile, new ReflectDatumReader<ReflectRecord>(reflectSchema));
-    try {
+    try(DataFileReader<ReflectRecord> avro = new DataFileReader<>(
+      avroFile, new ReflectDatumReader<>(reflectSchema))) {
       avroRecord = avro.next();
-    } finally {
-      avro.close();
     }
 
     ReflectRecord parquetRecord;
@@ -248,14 +224,11 @@ public class TestStringBehavior {
     conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
     AvroReadSupport.setAvroDataSupplier(conf, ReflectDataSupplier.class);
     AvroReadSupport.setAvroReadSchema(conf, reflectSchema);
-    ParquetReader<ReflectRecord> parquet = AvroParquetReader
+    try(ParquetReader<ReflectRecord> parquet = AvroParquetReader
         .<ReflectRecord>builder(parquetFile)
         .withConf(conf)
-        .build();
-    try {
+        .build()) {
       parquetRecord = parquet.read();
-    } finally {
-      parquet.close();
     }
 
     Assert.assertEquals("Avro default string class should be String",
@@ -297,13 +270,10 @@ public class TestStringBehavior {
         .getSchema(ReflectRecordJavaClass.class);
     System.err.println("Schema: " + reflectSchema.toString(true));
     ReflectRecordJavaClass avroRecord;
-    DataFileReader<ReflectRecordJavaClass> avro =
-        new DataFileReader<ReflectRecordJavaClass>(avroFile,
-            new ReflectDatumReader<ReflectRecordJavaClass>(reflectSchema));
-    try {
+    try(DataFileReader<ReflectRecordJavaClass> avro =
+          new DataFileReader<>(avroFile,
+            new ReflectDatumReader<>(reflectSchema))) {
       avroRecord = avro.next();
-    } finally {
-      avro.close();
     }
 
     ReflectRecordJavaClass parquetRecord;
@@ -312,14 +282,11 @@ public class TestStringBehavior {
     AvroReadSupport.setAvroDataSupplier(conf, ReflectDataSupplier.class);
     AvroReadSupport.setAvroReadSchema(conf, reflectSchema);
     AvroReadSupport.setRequestedProjection(conf, reflectSchema);
-    ParquetReader<ReflectRecordJavaClass> parquet = AvroParquetReader
+    try(ParquetReader<ReflectRecordJavaClass> parquet = AvroParquetReader
         .<ReflectRecordJavaClass>builder(parquetFile)
         .withConf(conf)
-        .build();
-    try {
+        .build()) {
       parquetRecord = parquet.read();
-    } finally {
-      parquet.close();
     }
 
     // Avro uses String even if CharSequence is set

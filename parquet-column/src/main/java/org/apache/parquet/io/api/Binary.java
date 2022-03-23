@@ -1,4 +1,4 @@
-/* 
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.io.ObjectStreamException;
 import java.io.OutputStream;
 import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -31,11 +30,8 @@ import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.io.ParquetEncodingException;
 import org.apache.parquet.schema.PrimitiveComparator;
-
-import static org.apache.parquet.bytes.BytesUtils.UTF8;
 
 abstract public class Binary implements Comparable<Binary>, Serializable {
 
@@ -77,8 +73,15 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
    * might not be correct. The {@link java.util.Comparator} implementation for the related type available at
    * {@link org.apache.parquet.schema.PrimitiveType#comparator} should be used instead.
    */
+  @Override
   @Deprecated
   abstract public int compareTo(Binary other);
+
+  abstract int lexicographicCompare(Binary other);
+
+  abstract int lexicographicCompare(byte[] other, int otherOffset, int otherLength);
+
+  abstract int lexicographicCompare(ByteBuffer other, int otherOffset, int otherLength);
 
   abstract public ByteBuffer toByteBuffer();
 
@@ -133,11 +136,10 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
 
     @Override
     public String toStringUsingUTF8() {
-      return UTF8.decode(ByteBuffer.wrap(value, offset, length)).toString();
-      // TODO: figure out why the following line was much slower
-      // rdb: new String(...) is slower because it instantiates a new Decoder,
-      //      while Charset#decode uses a thread-local decoder cache
-      // return new String(value, offset, length, BytesUtils.UTF8);
+      // Charset#decode uses a thread-local decoder cache and is faster than
+      // new String(...) which instantiates a new Decoder per invocation
+      return StandardCharsets.UTF_8
+          .decode(ByteBuffer.wrap(value, offset, length)).toString();
     }
 
     @Override
@@ -196,6 +198,22 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
     }
 
     @Override
+    int lexicographicCompare(Binary other) {
+      // NOTE: We have to flip the sign, since we swap operands sides
+      return -other.lexicographicCompare(value, offset, length);
+    }
+
+    @Override
+    int lexicographicCompare(byte[] other, int otherOffset, int otherLength) {
+      return Binary.lexicographicCompare(value, offset, length, other, otherOffset, otherLength);
+    }
+
+    @Override
+    int lexicographicCompare(ByteBuffer other, int otherOffset, int otherLength) {
+      return Binary.lexicographicCompare(value, offset, length, other, otherOffset, otherLength);
+    }
+
+    @Override
     public ByteBuffer toByteBuffer() {
       return ByteBuffer.wrap(value, offset, length);
     }
@@ -220,11 +238,7 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
     }
 
     private static ByteBuffer encodeUTF8(String value) {
-      try {
-        return ByteBuffer.wrap(value.getBytes("UTF-8"));
-      } catch (UnsupportedEncodingException e) {
-        throw new ParquetEncodingException("UTF-8 not supported.", e);
-      }
+      return ByteBuffer.wrap(value.getBytes(StandardCharsets.UTF_8));
     }
   }
 
@@ -241,12 +255,7 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
     }
 
     private static final ThreadLocal<CharsetEncoder> ENCODER =
-      new ThreadLocal<CharsetEncoder>() {
-        @Override
-        protected CharsetEncoder initialValue() {
-          return StandardCharsets.UTF_8.newEncoder();
-        }
-      };
+      ThreadLocal.withInitial(StandardCharsets.UTF_8::newEncoder);
 
     private static ByteBuffer encodeUTF8(CharSequence value) {
       try {
@@ -284,7 +293,7 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
 
     @Override
     public String toStringUsingUTF8() {
-      return UTF8.decode(ByteBuffer.wrap(value)).toString();
+      return StandardCharsets.UTF_8.decode(ByteBuffer.wrap(value)).toString();
     }
 
     @Override
@@ -341,7 +350,23 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
       return PrimitiveComparator.UNSIGNED_LEXICOGRAPHICAL_BINARY_COMPARATOR.compare(this, other);
     }
 
-   @Override
+    @Override
+    int lexicographicCompare(Binary other) {
+      // NOTE: We have to flip the sign, since we swap operands sides
+      return -other.lexicographicCompare(value, 0, value.length);
+    }
+
+    @Override
+    int lexicographicCompare(byte[] other, int otherOffset, int otherLength) {
+      return Binary.lexicographicCompare(this.value, 0, value.length, other, otherOffset, otherLength);
+    }
+
+    @Override
+    int lexicographicCompare(ByteBuffer other, int otherOffset, int otherLength) {
+      return Binary.lexicographicCompare(this.value, 0, value.length, other, otherOffset, otherLength);
+    }
+
+    @Override
     public ByteBuffer toByteBuffer() {
       return ByteBuffer.wrap(value);
     }
@@ -393,11 +418,8 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
     public String toStringUsingUTF8() {
       String ret;
       if (value.hasArray()) {
-        try {
-          ret = new String(value.array(), value.arrayOffset() + offset, length, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-          throw new ParquetDecodingException("UTF-8 not supported");
-        }
+        ret = new String(value.array(), value.arrayOffset() + offset, length,
+            StandardCharsets.UTF_8);
       } else {
         int limit = value.limit();
         value.limit(offset+length);
@@ -406,7 +428,7 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
         // no corresponding interface to read a subset of a buffer, would have to slice it
         // which creates another ByteBuffer object or do what is done here to adjust the
         // limit/offset and set them back after
-        ret = UTF8.decode(value).toString();
+        ret = StandardCharsets.UTF_8.decode(value).toString();
         value.limit(limit);
         value.position(position);
       }
@@ -492,6 +514,32 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
     }
 
     @Override
+    int lexicographicCompare(Binary other) {
+      if (value.hasArray()) {
+        // NOTE: We have to flip the sign, since we swap operands sides
+        return -other.lexicographicCompare(value.array(), value.arrayOffset() + offset, length);
+      } else {
+        // NOTE: We have to flip the sign, since we swap operands sides
+        return -other.lexicographicCompare(value, offset, length);
+      }
+    }
+
+    @Override
+    int lexicographicCompare(byte[] other, int otherOffset, int otherLength) {
+      if (value.hasArray()) {
+        return Binary.lexicographicCompare(value.array(), value.arrayOffset() + offset, length, other, otherOffset, otherLength);
+      } else {
+        // NOTE: We have to flip the sign, since we swap operands sides
+        return -Binary.lexicographicCompare(other, otherOffset, otherLength, value, offset, length);
+      }
+    }
+
+    @Override
+    int lexicographicCompare(ByteBuffer other, int otherOffset, int otherLength) {
+      return Binary.lexicographicCompare(value, offset, length, other, otherOffset, otherLength);
+    }
+
+    @Override
     public ByteBuffer toByteBuffer() {
       ByteBuffer ret = value.duplicate();
       ret.position(offset);
@@ -556,6 +604,10 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
 
   public static Binary fromCharSequence(CharSequence value) {
     return new FromCharSequenceBinary(value);
+  }
+
+  public static int lexicographicCompare(Binary one, Binary other) {
+    return one.lexicographicCompare(other);
   }
 
   /**
@@ -628,5 +680,58 @@ abstract public class Binary implements Comparable<Binary>, Serializable {
       }
     }
     return true;
+  }
+
+  private static final int lexicographicCompare(byte[] array1, int offset1, int length1, byte[] array2, int offset2, int length2) {
+    if (array1 == null && array2 == null) return 0;
+    if (array1 == null || array2 == null) return array1 != null ? 1 : -1;
+
+    int minLen = Math.min(length1, length2);
+    for (int i = 0; i < minLen; i++) {
+      int res = unsignedCompare(array1[i + offset1], array2[i + offset2]);
+      if (res != 0) {
+        return res;
+      }
+    }
+
+    return length1 - length2;
+  }
+
+  private static final int lexicographicCompare(byte[] array, int offset1, int length1, ByteBuffer buffer, int offset2, int length2) {
+    if (array == null && buffer == null) return 0;
+    if (array == null || buffer == null) return array != null ? 1 : -1;
+
+    int minLen = Math.min(length1, length2);
+    for (int i = 0; i < minLen; i++) {
+      int res = unsignedCompare(array[i + offset1], buffer.get(i + offset2));
+      if (res != 0) {
+        return res;
+      }
+    }
+
+    return length1 - length2;
+  }
+
+  private static final int lexicographicCompare(ByteBuffer buffer1, int offset1, int length1, ByteBuffer buffer2, int offset2, int length2) {
+    if (buffer1 == null && buffer2 == null) return 0;
+    if (buffer1 == null || buffer2 == null) return buffer1 != null ? 1 : -1;
+
+    int minLen = Math.min(length1, length2);
+    for (int i = 0; i < minLen; i++) {
+      int res = unsignedCompare(buffer1.get(i + offset1), buffer2.get(i + offset2));
+      if (res != 0) {
+        return res;
+      }
+    }
+
+    return length1 - length2;
+  }
+
+  private static int unsignedCompare(byte b1, byte b2) {
+    return toUnsigned(b1) - toUnsigned(b2);
+  }
+
+  private static final int toUnsigned(byte b) {
+    return b & 0xFF;
   }
 }

@@ -24,14 +24,14 @@
     <groupId>org.apache.parquet</groupId>
     <artifactId>parquet</artifactId>
     <relativePath>../pom.xml</relativePath>
-    <version>1.10.1-SNAPSHOT</version>
+    <version>1.13.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>parquet-format-structures</artifactId>
   <packaging>jar</packaging>
 
   <name>Apache Parquet Format Structures</name>
-  <url>http://parquet.apache.org/</url>
+  <url>https://parquet.apache.org/</url>
   <description>Parquet-mr related java classes to use the parquet-format thrift structures.</description>
 
   <properties>
@@ -47,7 +47,7 @@
          <executions>
            <execution>
              <id>unpack</id>
-             <phase>generate-sources</phase>
+             <phase>initialize</phase>
              <goals>
                <goal>unpack</goal>
              </goals>
@@ -68,9 +68,9 @@
        </plugin>
       <!-- thrift -->
       <plugin>
-        <groupId>org.apache.thrift.tools</groupId>
-        <artifactId>maven-thrift-plugin</artifactId>
-        <version>0.1.11</version>
+        <groupId>org.apache.thrift</groupId>
+        <artifactId>thrift-maven-plugin</artifactId>
+        <version>${thrift-maven-plugin.version}</version>
         <configuration>
           <thriftSourceRoot>${parquet.thrift.path}</thriftSourceRoot>
           <thriftExecutable>${format.thrift.executable}</thriftExecutable>
@@ -128,7 +128,9 @@
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
           <!-- We have to turn off the javadoc check because thrift generates improper comments -->
-          <additionalparam>-Xdoclint:none</additionalparam>
+          <doclint>none</doclint>
+          <source>8</source>
+          <quiet>true</quiet>
         </configuration>
       </plugin>
     </plugins>
@@ -141,18 +143,14 @@
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
           <!-- We have to turn off the javadoc check because thrift generates improper comments -->
-          <additionalparam>-Xdoclint:none</additionalparam>
+          <doclint>none</doclint>
+          <source>8</source>
         </configuration>
       </plugin>
     </plugins>
   </reports>
 
   <dependencies>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-      <version>${slf4j.version}</version>
-    </dependency>
     <dependency>
       <groupId>org.apache.thrift</groupId>
       <artifactId>libthrift</artifactId>

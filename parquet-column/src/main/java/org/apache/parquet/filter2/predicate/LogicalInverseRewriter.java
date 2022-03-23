@@ -23,17 +23,20 @@ import org.apache.parquet.filter2.predicate.Operators.And;
 import org.apache.parquet.filter2.predicate.Operators.Eq;
 import org.apache.parquet.filter2.predicate.Operators.Gt;
 import org.apache.parquet.filter2.predicate.Operators.GtEq;
+import org.apache.parquet.filter2.predicate.Operators.In;
 import org.apache.parquet.filter2.predicate.Operators.LogicalNotUserDefined;
 import org.apache.parquet.filter2.predicate.Operators.Lt;
 import org.apache.parquet.filter2.predicate.Operators.LtEq;
 import org.apache.parquet.filter2.predicate.Operators.Not;
 import org.apache.parquet.filter2.predicate.Operators.NotEq;
+import org.apache.parquet.filter2.predicate.Operators.NotIn;
 import org.apache.parquet.filter2.predicate.Operators.Or;
 import org.apache.parquet.filter2.predicate.Operators.UserDefined;
 
-import static org.apache.parquet.Preconditions.checkNotNull;
 import static org.apache.parquet.filter2.predicate.FilterApi.and;
 import static org.apache.parquet.filter2.predicate.FilterApi.or;
+
+import java.util.Objects;
 
 /**
  * Recursively removes all use of the not() operator in a predicate
@@ -50,7 +53,7 @@ public final class LogicalInverseRewriter implements Visitor<FilterPredicate> {
   private static final LogicalInverseRewriter INSTANCE = new LogicalInverseRewriter();
 
   public static FilterPredicate rewrite(FilterPredicate pred) {
-    checkNotNull(pred, "pred");
+    Objects.requireNonNull(pred, "pred cannot be null");
     return pred.accept(INSTANCE);
   }
 
@@ -84,6 +87,16 @@ public final class LogicalInverseRewriter implements Visitor<FilterPredicate> {
   @Override
   public <T extends Comparable<T>> FilterPredicate visit(GtEq<T> gtEq) {
     return gtEq;
+  }
+
+  @Override
+  public <T extends Comparable<T>> FilterPredicate visit(In<T> in) {
+    return in;
+  }
+
+  @Override
+  public <T extends Comparable<T>> FilterPredicate visit(NotIn<T> notIn) {
+    return notIn;
   }
 
   @Override

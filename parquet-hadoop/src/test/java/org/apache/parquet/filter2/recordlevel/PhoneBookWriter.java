@@ -18,6 +18,8 @@
  */
 package org.apache.parquet.filter2.recordlevel;
 
+import static org.junit.Assert.assertEquals;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -199,6 +201,10 @@ public class PhoneBookWriter {
     public String toString() {
       return "User [id=" + id + ", name=" + name + ", phoneNumbers=" + phoneNumbers + ", location=" + location + "]";
     }
+
+    public User cloneWithName(String name) {
+      return new User(id, name, phoneNumbers, location);
+    }
   }
 
   public static SimpleGroup groupFromUser(User user) {
@@ -257,6 +263,10 @@ public class PhoneBookWriter {
   }
 
   private static boolean isNull(Group group, String field) {
+    // Use null value if the field is not in the group schema
+    if (!group.getType().containsField(field)) {
+      return true;
+    }
     int repetition = group.getFieldRepetitionCount(field);
     if (repetition == 0) {
       return true;
@@ -307,7 +317,7 @@ public class PhoneBookWriter {
     }
   }
 
-  private static ParquetReader<Group> createReader(Path file, Filter filter) throws IOException {
+  public static ParquetReader<Group> createReader(Path file, Filter filter) throws IOException {
     Configuration conf = new Configuration();
     GroupWriteSupport.setSchema(schema, conf);
 
@@ -333,11 +343,24 @@ public class PhoneBookWriter {
   }
 
   public static List<User> readUsers(ParquetReader.Builder<Group> builder) throws IOException {
+    return readUsers(builder, false);
+  }
+
+  /**
+   * Returns a list of users from the underlying [[ParquetReader]] builder.
+   * If `validateRowIndexes` is set to true, this method will also validate the ROW_INDEXes for the
+   * rows read from ParquetReader - ROW_INDEX for a row should be same as underlying user id.
+   */
+  public static List<User> readUsers(ParquetReader.Builder<Group> builder, boolean validateRowIndexes) throws IOException {
     ParquetReader<Group> reader = builder.set(GroupWriteSupport.PARQUET_EXAMPLE_SCHEMA, schema.toString()).build();
 
     List<User> users = new ArrayList<>();
     for (Group group = reader.read(); group != null; group = reader.read()) {
-      users.add(userFromGroup(group));
+      User u = userFromGroup(group);
+      users.add(u);
+      if (validateRowIndexes) {
+        assertEquals(reader.getCurrentRowIndex(), u.id);
+      }
     }
     return users;
   }

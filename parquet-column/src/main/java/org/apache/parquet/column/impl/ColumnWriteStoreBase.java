@@ -34,6 +34,8 @@ import org.apache.parquet.column.ColumnWriter;
 import org.apache.parquet.column.ParquetProperties;
 import org.apache.parquet.column.page.PageWriteStore;
 import org.apache.parquet.column.page.PageWriter;
+import org.apache.parquet.column.values.bloomfilter.BloomFilterWriteStore;
+import org.apache.parquet.column.values.bloomfilter.BloomFilterWriter;
 import org.apache.parquet.schema.MessageType;
 
 /**
@@ -67,14 +69,14 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
 
     this.columns = new TreeMap<>();
 
-    this.rowCountForNextSizeCheck = props.getMinRowCountForPageSizeCheck();
+    this.rowCountForNextSizeCheck = min(props.getMinRowCountForPageSizeCheck(), props.getPageRowCountLimit());
 
     columnWriterProvider = new ColumnWriterProvider() {
       @Override
       public ColumnWriter getColumnWriter(ColumnDescriptor path) {
         ColumnWriterBase column = columns.get(path);
         if (column == null) {
-          column = createColumnWriter(path, pageWriteStore.getPageWriter(path), props);
+          column = createColumnWriter(path, pageWriteStore.getPageWriter(path), null, props);
           columns.put(path, column);
         }
         return column;
@@ -91,7 +93,37 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
     Map<ColumnDescriptor, ColumnWriterBase> mcolumns = new TreeMap<>();
     for (ColumnDescriptor path : schema.getColumns()) {
       PageWriter pageWriter = pageWriteStore.getPageWriter(path);
-      mcolumns.put(path, createColumnWriter(path, pageWriter, props));
+      mcolumns.put(path, createColumnWriter(path, pageWriter, null, props));
+    }
+    this.columns = unmodifiableMap(mcolumns);
+
+    this.rowCountForNextSizeCheck = min(props.getMinRowCountForPageSizeCheck(), props.getPageRowCountLimit());
+
+    columnWriterProvider = new ColumnWriterProvider() {
+      @Override
+      public ColumnWriter getColumnWriter(ColumnDescriptor path) {
+        return columns.get(path);
+      }
+    };
+  }
+
+  // The Bloom filter is written to a specified bitset instead of pages, so it needs a separate write store abstract.
+  ColumnWriteStoreBase(
+    MessageType schema,
+    PageWriteStore pageWriteStore,
+    BloomFilterWriteStore bloomFilterWriteStore,
+    ParquetProperties props) {
+    this.props = props;
+    this.thresholdTolerance = (long) (props.getPageSizeThreshold() * THRESHOLD_TOLERANCE_RATIO);
+    Map<ColumnDescriptor, ColumnWriterBase> mcolumns = new TreeMap<>();
+    for (ColumnDescriptor path : schema.getColumns()) {
+      PageWriter pageWriter = pageWriteStore.getPageWriter(path);
+      if (props.isBloomFilterEnabled(path)) {
+        BloomFilterWriter bloomFilterWriter = bloomFilterWriteStore.getBloomFilterWriter(path);
+        mcolumns.put(path, createColumnWriter(path, pageWriter, bloomFilterWriter, props));
+      } else {
+        mcolumns.put(path, createColumnWriter(path, pageWriter, null, props));
+      }
     }
     this.columns = unmodifiableMap(mcolumns);
 
@@ -105,8 +137,10 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
     };
   }
 
-  abstract ColumnWriterBase createColumnWriter(ColumnDescriptor path, PageWriter pageWriter, ParquetProperties props);
+  abstract ColumnWriterBase createColumnWriter(ColumnDescriptor path, PageWriter pageWriter,
+                                               BloomFilterWriter bloomFilterWriter, ParquetProperties props);
 
+  @Override
   public ColumnWriter getColumnWriter(ColumnDescriptor path) {
     return columnWriterProvider.getColumnWriter(path);
   }
@@ -155,6 +189,7 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
     }
   }
 
+  @Override
   public String memUsageString() {
     StringBuilder b = new StringBuilder("Store {\n");
     for (ColumnWriterBase memColumn : columns.values()) {
@@ -190,18 +225,23 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
 
   private void sizeCheck() {
     long minRecordToWait = Long.MAX_VALUE;
+    int pageRowCountLimit = props.getPageRowCountLimit();
+    long rowCountForNextRowCountCheck = rowCount + pageRowCountLimit;
     for (ColumnWriterBase writer : columns.values()) {
       long usedMem = writer.getCurrentPageBufferedSize();
       long rows = rowCount - writer.getRowsWrittenSoFar();
       long remainingMem = props.getPageSizeThreshold() - usedMem;
-      if (remainingMem <= thresholdTolerance) {
+      if (remainingMem <= thresholdTolerance || rows >= pageRowCountLimit) {
         writer.writePage();
         remainingMem = props.getPageSizeThreshold();
+      } else {
+        rowCountForNextRowCountCheck = min(rowCountForNextRowCountCheck, writer.getRowsWrittenSoFar() + pageRowCountLimit);
       }
+      //estimate remaining row count by previous input for next row count check
       long rowsToFillPage =
           usedMem == 0 ?
               props.getMaxRowCountForPageSizeCheck()
-              : (long) ((float) rows) / usedMem * remainingMem;
+              : rows * remainingMem / usedMem;
       if (rowsToFillPage < minRecordToWait) {
         minRecordToWait = rowsToFillPage;
       }
@@ -219,5 +259,15 @@ abstract class ColumnWriteStoreBase implements ColumnWriteStore {
     } else {
       rowCountForNextSizeCheck = rowCount + props.getMinRowCountForPageSizeCheck();
     }
+
+    // Do the check earlier if required to keep the row count limit
+    if (rowCountForNextRowCountCheck < rowCountForNextSizeCheck) {
+      rowCountForNextSizeCheck = rowCountForNextRowCountCheck;
+    }
+  }
+
+  @Override
+  public boolean isColumnFlushNeeded() {
+    return rowCount + 1 >= rowCountForNextSizeCheck;
   }
 }

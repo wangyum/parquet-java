@@ -21,6 +21,7 @@ package org.apache.parquet.hadoop.util;
 
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.parquet.io.DelegatingSeekableInputStream;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -62,7 +63,7 @@ class H2SeekableInputStream extends DelegatingSeekableInputStream {
 
   @Override
   public void readFully(byte[] bytes, int start, int len) throws IOException {
-    stream.readFully(bytes);
+    stream.readFully(bytes, start, len);
   }
 
   @Override

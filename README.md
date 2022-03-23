@@ -17,7 +17,7 @@
   ~ under the License.
   -->
 
-Parquet MR [![Build Status](https://travis-ci.org/apache/parquet-mr.svg?branch=master)](http://travis-ci.org/apache/parquet-mr)
+Parquet MR [![Build Status](https://github.com/apache/parquet-mr/workflows/Test/badge.svg)](https://github.com/apache/parquet-mr/actions)
 ======
 
 Parquet-MR contains the java implementation of the [Parquet format](https://github.com/apache/parquet-format).
@@ -28,33 +28,26 @@ You can find some details about the format and intended use cases in our [Hadoop
 
 ## Building
 
-Parquet-MR uses Maven to build and depends on both the thrift and protoc compilers.
-
-### Install Protobuf
-
-To build and install the protobuf compiler, run:
-
-```
-wget https://github.com/google/protobuf/archive/v3.5.1.tar.gz -O protobuf-3.5.1.tar.gz
-tar xzf protobuf-3.5.1.tar.gz
-cd protobuf-3.5.1
-./configure
-make
-sudo make install
-sudo ldconfig
-```
+Parquet-MR uses Maven to build and depends on the thrift compiler (protoc is now managed by maven plugin).
 
 ### Install Thrift
 
 To build and install the thrift compiler, run:
 
 ```
-wget -nv http://archive.apache.org/dist/thrift/0.9.3/thrift-0.9.3.tar.gz
-tar xzf thrift-0.9.3.tar.gz
-cd thrift-0.9.3
+wget -nv http://archive.apache.org/dist/thrift/0.16.0/thrift-0.16.0.tar.gz
+tar xzf thrift-0.16.0.tar.gz
+cd thrift-0.16.0
 chmod +x ./configure
-./configure --disable-gen-erl --disable-gen-hs --without-ruby --without-haskell --without-erlang --without-php --without-nodejs
+./configure --disable-libs
 sudo make install
+```
+
+If you're on OSX and use homebrew, you can instead install Thrift 0.16.0 with `brew` and ensure that it comes first in your `PATH`.
+
+```
+brew install thrift
+export PATH="/usr/local/opt/thrift@0.16.0/bin:$PATH"
 ```
 
 ### Build Parquet with Maven
@@ -71,12 +64,12 @@ Parquet is a very active project, and new features are being added quickly. Here
 
 
 * Type-specific encoding
-* Hive integration
+* Hive integration (deprecated)
 * Pig integration
-* Cascading integration
+* Cascading integration (deprecated)
 * Crunch integration
 * Apache Arrow integration
-* Apache Scrooge integration
+* Scrooge integration (deprecated)
 * Impala integration (non-nested)
 * Java Map/Reduce API
 * Native Avro support
@@ -99,10 +92,13 @@ Note that to use an Input or Output format, you need to implement a WriteSupport
 We've implemented this for 2 popular data formats to provide a clean migration path as well:
 
 ### Thrift
-Thrift integration is provided by the [parquet-thrift](https://github.com/apache/parquet-mr/tree/master/parquet-thrift) sub-project. If you are using Thrift through Scala, you may be using Twitter's [Scrooge](https://github.com/twitter/scrooge). If that's the case, not to worry -- we took care of the Scrooge/Apache Thrift glue for you in the [parquet-scrooge](https://github.com/apache/parquet-mr/tree/master/parquet-scrooge) sub-project.
+Thrift integration is provided by the [parquet-thrift](https://github.com/apache/parquet-mr/tree/master/parquet-thrift) sub-project.
 
 ### Avro
 Avro conversion is implemented via the [parquet-avro](https://github.com/apache/parquet-mr/tree/master/parquet-avro) sub-project.
+
+### Protobuf
+Protobuf conversion is implemented via the [parquet-protobuf](https://github.com/apache/parquet-mr/tree/master/parquet-protobuf) sub-project.
 
 ### Create your own objects
 * The ParquetOutputFormat can be provided a WriteSupport to write your own objects to an event based RecordConsumer.
@@ -134,39 +130,41 @@ If the data was stored using Pig, things will "just work". If the data was store
 
 Hive integration is provided via the [parquet-hive](https://github.com/apache/parquet-mr/tree/master/parquet-hive) sub-project.
 
+Hive integration is now deprecated within the Parquet project. It is now maintained by Apache Hive.
+
 ## Build
 
 To run the unit tests: `mvn test`
 
 To build the jars: `mvn package`
 
-The build runs in [Travis CI](http://travis-ci.org/apache/parquet-mr):
-[![Build Status](https://travis-ci.org/apache/parquet-mr.svg?branch=master)](http://travis-ci.org/apache/parquet-mr)
+The build runs in [GitHub Actions](https://github.com/apache/parquet-mr/actions):
+[![Build Status](https://github.com/apache/parquet-mr/workflows/Test/badge.svg)](https://github.com/apache/parquet-mr/actions)
 
 ## Add Parquet as a dependency in Maven
-The current release is version `1.10.0`
+The current release is version `1.12.0`
 
 ```xml
   <dependencies>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-common</artifactId>
-      <version>1.10.0</version>
+      <version>1.12.0</version>
     </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-encoding</artifactId>
-      <version>1.10.0</version>
+      <version>1.12.0</version>
     </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-column</artifactId>
-      <version>1.10.0</version>
+      <version>1.12.0</version>
     </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-hadoop</artifactId>
-      <version>1.10.0</version>
+      <version>1.12.0</version>
     </dependency>
   </dependencies>
 ```

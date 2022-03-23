@@ -21,6 +21,8 @@ package org.apache.parquet.filter2.statisticslevel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.hadoop.metadata.ColumnPath;
@@ -30,17 +32,18 @@ import org.apache.parquet.filter2.predicate.Operators.Column;
 import org.apache.parquet.filter2.predicate.Operators.Eq;
 import org.apache.parquet.filter2.predicate.Operators.Gt;
 import org.apache.parquet.filter2.predicate.Operators.GtEq;
+import org.apache.parquet.filter2.predicate.Operators.In;
 import org.apache.parquet.filter2.predicate.Operators.LogicalNotUserDefined;
 import org.apache.parquet.filter2.predicate.Operators.Lt;
 import org.apache.parquet.filter2.predicate.Operators.LtEq;
 import org.apache.parquet.filter2.predicate.Operators.Not;
 import org.apache.parquet.filter2.predicate.Operators.NotEq;
+import org.apache.parquet.filter2.predicate.Operators.NotIn;
 import org.apache.parquet.filter2.predicate.Operators.Or;
 import org.apache.parquet.filter2.predicate.Operators.UserDefined;
 import org.apache.parquet.filter2.predicate.UserDefinedPredicate;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
-
-import static org.apache.parquet.Preconditions.checkNotNull;
+import org.apache.parquet.column.MinMax;
 
 /**
  * Applies a {@link org.apache.parquet.filter2.predicate.FilterPredicate} to statistics about a group of
@@ -67,8 +70,8 @@ public class StatisticsFilter implements FilterPredicate.Visitor<Boolean> {
   private static final boolean BLOCK_CANNOT_MATCH = true;
 
   public static boolean canDrop(FilterPredicate pred, List<ColumnChunkMetaData> columns) {
-    checkNotNull(pred, "pred");
-    checkNotNull(columns, "columns");
+    Objects.requireNonNull(pred, "pred cannot be null");
+    Objects.requireNonNull(columns, "columns cannot be null");
     return pred.accept(new StatisticsFilter(columns));
   }
 
@@ -143,6 +146,71 @@ public class StatisticsFilter implements FilterPredicate.Visitor<Boolean> {
 
     // drop if value < min || value > max
     return stats.compareMinToValue(value) > 0 || stats.compareMaxToValue(value) < 0;
+  }
+
+  @Override
+  @SuppressWarnings("unchecked")
+  public <T extends Comparable<T>> Boolean visit(In<T> in) {
+    Column<T> filterColumn = in.getColumn();
+    ColumnChunkMetaData meta = getColumnChunk(filterColumn.getColumnPath());
+
+    Set<T> values = in.getValues();
+
+    if (meta == null) {
+      // the column isn't in this file so all values are null.
+      if (!values.contains(null)) {
+        // non-null is never null
+        return BLOCK_CANNOT_MATCH;
+      }
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    Statistics<T> stats = meta.getStatistics();
+
+    if (stats.isEmpty()) {
+      // we have no statistics available, we cannot drop any chunks
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    if (isAllNulls(meta)) {
+      // we are looking for records where v in(someNonNull)
+      // and this is a column of all nulls, so drop it unless in set contains null.
+      if (values.contains(null)) {
+        return BLOCK_MIGHT_MATCH;
+      } else {
+        return BLOCK_CANNOT_MATCH;
+      }
+    }
+
+    if (!stats.hasNonNullValue()) {
+      // stats does not contain min/max values, we cannot drop any chunks
+      return BLOCK_MIGHT_MATCH;
+    }
+
+    if (stats.isNumNullsSet()) {
+      if (stats.getNumNulls() == 0) {
+        if (values.contains(null) && values.size() == 1) return BLOCK_CANNOT_MATCH;
+      } else {
+        if (values.contains(null)) return BLOCK_MIGHT_MATCH;
+      }
+    }
+
+    MinMax<T> minMax = new MinMax(meta.getPrimitiveType().comparator(), values);
+    T min = minMax.getMin();
+    T max = minMax.getMax();
+
+    // drop if all the element in value < min || all the element in value > max
+    if (stats.compareMinToValue(max) <= 0 &&
+      stats.compareMaxToValue(min) >= 0) {
+      return BLOCK_MIGHT_MATCH;
+    } else {
+      return BLOCK_CANNOT_MATCH;
+    }
+  }
+
+  @Override
+  public <T extends Comparable<T>> Boolean visit(NotIn<T> notIn) {
+    return BLOCK_MIGHT_MATCH;
   }
 
   @Override
@@ -366,9 +434,9 @@ public class StatisticsFilter implements FilterPredicate.Visitor<Boolean> {
       // the column isn't in this file so all values are null.
       // lets run the udp with null value to see if it keeps null or not.
       if (inverted) {
-        return udp.keep(null);
+        return udp.acceptsNullValue();
       } else {
-        return !udp.keep(null);
+        return !udp.acceptsNullValue();
       }
     }
 
@@ -382,9 +450,9 @@ public class StatisticsFilter implements FilterPredicate.Visitor<Boolean> {
     if (isAllNulls(columnChunk)) {
       // lets run the udp with null value to see if it keeps null or not.
       if (inverted) {
-        return udp.keep(null);
+        return udp.acceptsNullValue();
       } else {
-        return !udp.keep(null);
+        return !udp.acceptsNullValue();
       }
     }
 

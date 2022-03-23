@@ -21,7 +21,7 @@
     <groupId>org.apache.parquet</groupId>
     <artifactId>parquet</artifactId>
     <relativePath>../pom.xml</relativePath>
-    <version>1.10.1-SNAPSHOT</version>
+    <version>1.13.0-SNAPSHOT</version>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
@@ -34,14 +34,14 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.codehaus.jackson</groupId>
-      <artifactId>jackson-mapper-asl</artifactId>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
       <version>${jackson.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.codehaus.jackson</groupId>
-      <artifactId>jackson-core-asl</artifactId>
-      <version>${jackson.version}</version>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson-databind.version}</version>
     </dependency>
   </dependencies>
 
@@ -66,7 +66,7 @@
             </goals>
             <configuration combine.self="override">
               <minimizeJar>false</minimizeJar>
-              <createSourcesJar>${shade.createSourcesJar}</createSourcesJar> 
+              <createSourcesJar>${shade.createSourcesJar}</createSourcesJar>
               <artifactSet>
                 <includes>
                   <include>${jackson.groupId}:*</include>
@@ -90,8 +90,23 @@
           </execution>
         </executions>
       </plugin>
+      <!-- Skip analyzing dependencies in this module so we can depend on jackson without any code references -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>analyze-only</goal>
+            </goals>
+            <configuration>
+              <skip>true</skip>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
-  </build> 
+  </build>
   <profiles>
     <profile>
       <id>sonatype-oss-release</id>

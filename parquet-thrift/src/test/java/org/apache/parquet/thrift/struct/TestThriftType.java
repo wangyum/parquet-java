@@ -1,4 +1,4 @@
-/* 
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -32,25 +32,28 @@ public class TestThriftType {
   @Test
   public void testWriteUnionInfo() throws Exception {
     StructType st = new StructType(new LinkedList<ThriftField>(), null);
-    assertEquals("{\n"
+    assertEquals(("{\n"
                 +"  \"id\" : \"STRUCT\",\n"
                 +"  \"children\" : [ ],\n"
-                +"  \"structOrUnionType\" : \"UNKNOWN\"\n"
-                +"}", st.toJSON());
+                +"  \"structOrUnionType\" : \"STRUCT\",\n"
+                +"  \"logicalTypeAnnotation\" : null\n"
+                +"}").replace("\n", System.lineSeparator()), st.toJSON());
 
     st = new StructType(new LinkedList<ThriftField>(), StructOrUnionType.UNION);
-    assertEquals("{\n"
+    assertEquals(("{\n"
         +"  \"id\" : \"STRUCT\",\n"
         +"  \"children\" : [ ],\n"
-        +"  \"structOrUnionType\" : \"UNION\"\n"
-        +"}", st.toJSON());
+        +"  \"structOrUnionType\" : \"UNION\",\n"
+        +"  \"logicalTypeAnnotation\" : null\n"
+        +"}").replace("\n", System.lineSeparator()), st.toJSON());
 
     st = new StructType(new LinkedList<ThriftField>(), StructOrUnionType.STRUCT);
-    assertEquals("{\n"
+    assertEquals(("{\n"
         +"  \"id\" : \"STRUCT\",\n"
         +"  \"children\" : [ ],\n"
-        +"  \"structOrUnionType\" : \"STRUCT\"\n"
-        +"}", st.toJSON());
+        +"  \"structOrUnionType\" : \"STRUCT\",\n"
+        +"  \"logicalTypeAnnotation\" : null\n"
+        +"}").replace("\n", System.lineSeparator()), st.toJSON());
   }
 
   @Test
@@ -60,7 +63,7 @@ public class TestThriftType {
     st = (StructType) StructType.fromJSON("{\"id\": \"STRUCT\", \"children\":[], \"structOrUnionType\": \"STRUCT\"}");
     assertEquals(st.getStructOrUnionType(), StructOrUnionType.STRUCT);
     st = (StructType) StructType.fromJSON("{\"id\": \"STRUCT\", \"children\":[]}");
-    assertEquals(st.getStructOrUnionType(), StructOrUnionType.UNKNOWN);
+    assertEquals(st.getStructOrUnionType(), StructOrUnionType.STRUCT);
     st = (StructType) StructType.fromJSON("{\"id\": \"STRUCT\", \"children\":[], \"structOrUnionType\": \"UNKNOWN\"}");
     assertEquals(st.getStructOrUnionType(), StructOrUnionType.UNKNOWN);
   }

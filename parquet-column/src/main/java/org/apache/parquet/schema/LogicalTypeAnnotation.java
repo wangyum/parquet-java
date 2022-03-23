@@ -19,6 +19,7 @@
 package org.apache.parquet.schema;
 
 import org.apache.parquet.Preconditions;
+import org.apache.yetus.audience.InterfaceAudience;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -129,6 +130,12 @@ public abstract class LogicalTypeAnnotation {
         return bsonType();
       }
     },
+    UUID {
+      @Override
+      protected LogicalTypeAnnotation fromString(List<String> params) {
+        return uuidType();
+      }
+    },
     INTERVAL {
       @Override
       protected LogicalTypeAnnotation fromString(List<String> params) {
@@ -145,6 +152,7 @@ public abstract class LogicalTypeAnnotation {
    *
    * @return the OriginalType representation of the new logical type, or null if there's none
    */
+  @InterfaceAudience.Private
   public abstract OriginalType toOriginalType();
 
   /**
@@ -179,6 +187,7 @@ public abstract class LogicalTypeAnnotation {
   /**
    * Helper method to convert the old representation of logical types (OriginalType) to new logical type.
    */
+  @InterfaceAudience.Private
   public static LogicalTypeAnnotation fromOriginalType(OriginalType originalType, DecimalMetadata decimalMetadata) {
     if (originalType == null) {
       return null;
@@ -283,6 +292,10 @@ public abstract class LogicalTypeAnnotation {
     return BsonLogicalTypeAnnotation.INSTANCE;
   }
 
+  public static UUIDLogicalTypeAnnotation uuidType() {
+    return UUIDLogicalTypeAnnotation.INSTANCE;
+  }
+
   public static class StringLogicalTypeAnnotation extends LogicalTypeAnnotation {
     private static final StringLogicalTypeAnnotation INSTANCE = new StringLogicalTypeAnnotation();
 
@@ -290,6 +303,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.UTF8;
     }
@@ -328,6 +342,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.MAP;
     }
@@ -361,6 +376,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.LIST;
     }
@@ -394,6 +410,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.ENUM;
     }
@@ -445,6 +462,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.DECIMAL;
     }
@@ -497,6 +515,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.DATE;
     }
@@ -544,6 +563,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       switch (unit) {
         case MILLIS:
@@ -622,6 +642,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       switch (unit) {
         case MILLIS:
@@ -707,6 +728,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       switch (bitWidth) {
         case 8:
@@ -778,6 +800,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.JSON;
     }
@@ -816,6 +839,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.BSON;
     }
@@ -847,6 +871,36 @@ public abstract class LogicalTypeAnnotation {
     }
   }
 
+  public static class UUIDLogicalTypeAnnotation extends LogicalTypeAnnotation {
+    private static final UUIDLogicalTypeAnnotation INSTANCE = new UUIDLogicalTypeAnnotation();
+    public static final int BYTES = 16;
+
+    private UUIDLogicalTypeAnnotation() {
+    }
+
+    @Override
+    @InterfaceAudience.Private
+    public OriginalType toOriginalType() {
+      // No OriginalType for UUID
+      return null;
+    }
+
+    @Override
+    public <T> Optional<T> accept(LogicalTypeAnnotationVisitor<T> logicalTypeAnnotationVisitor) {
+      return logicalTypeAnnotationVisitor.visit(this);
+    }
+
+    @Override
+    LogicalTypeToken getType() {
+      return LogicalTypeToken.UUID;
+    }
+
+    @Override
+    PrimitiveStringifier valueStringifier(PrimitiveType primitiveType) {
+      return PrimitiveStringifier.UUID_STRINGIFIER;
+    }
+  }
+
   // This logical type annotation is implemented to support backward compatibility with ConvertedType.
   // The new logical type representation in parquet-format doesn't have any interval type,
   // thus this annotation is mapped to UNKNOWN.
@@ -861,6 +915,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.INTERVAL;
     }
@@ -911,6 +966,7 @@ public abstract class LogicalTypeAnnotation {
     }
 
     @Override
+    @InterfaceAudience.Private
     public OriginalType toOriginalType() {
       return OriginalType.MAP_KEY_VALUE;
     }
@@ -990,6 +1046,10 @@ public abstract class LogicalTypeAnnotation {
     }
 
     default Optional<T> visit(BsonLogicalTypeAnnotation bsonLogicalType) {
+      return empty();
+    }
+
+    default Optional<T> visit(UUIDLogicalTypeAnnotation uuidLogicalType) {
       return empty();
     }
 

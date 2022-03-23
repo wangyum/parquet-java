@@ -27,8 +27,8 @@ import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.FLOAT;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import org.apache.parquet.bytes.ByteBufferInputStream;
 import org.junit.Assert;
@@ -53,6 +53,7 @@ import org.apache.parquet.column.values.plain.PlainValuesReader;
 import org.apache.parquet.column.values.plain.PlainValuesWriter;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
+import org.mockito.Mockito;
 
 public class TestDictionary {
 
@@ -169,6 +170,20 @@ public class TestDictionary {
     //simulate cutting the page
     cw.reset();
     assertEquals(0, cw.getBufferedSize());
+  }
+
+  @Test
+  public void testBinaryDictionaryIntegerOverflow() {
+    Binary mock = Mockito.mock(Binary.class);
+    Mockito.when(mock.length()).thenReturn(Integer.MAX_VALUE - 1);
+    // make the writer happy
+    Mockito.when(mock.copy()).thenReturn(Binary.fromString(" world"));
+
+    final ValuesWriter cw = newPlainBinaryDictionaryValuesWriter(100, 100);
+    cw.writeBytes(Binary.fromString("hello"));
+    cw.writeBytes(mock);
+
+    assertEquals(PLAIN, cw.getEncoding());
   }
 
   @Test
@@ -627,9 +642,8 @@ public class TestDictionary {
     }
   }
 
-  private void writeRepeatedWithReuse(int COUNT, ValuesWriter cw,
-                                      String prefix) throws UnsupportedEncodingException {
-    Binary reused = Binary.fromReusedByteArray((prefix + "0").getBytes("UTF-8"));
+  private void writeRepeatedWithReuse(int COUNT, ValuesWriter cw, String prefix) {
+    Binary reused = Binary.fromReusedByteArray((prefix + "0").getBytes(StandardCharsets.UTF_8));
     for (int i = 0; i < COUNT; i++) {
       Binary content = Binary.fromString(prefix + i % 10);
       System.arraycopy(content.getBytesUnsafe(), 0, reused.getBytesUnsafe(), 0, reused.length());

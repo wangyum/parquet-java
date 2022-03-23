@@ -29,6 +29,8 @@ import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.PrimitiveConverter;
+import org.apache.parquet.schema.PrimitiveStringifier;
+import org.apache.parquet.schema.PrimitiveType;
 
 public class AvroConverters {
 
@@ -76,9 +78,13 @@ public class AvroConverters {
       }
     }
 
+    public T prepareDictionaryValue(T value) {
+      return value;
+    }
+
     @Override
     public void addValueFromDictionary(int dictionaryId) {
-      parent.add(dict[dictionaryId]);
+      parent.add(prepareDictionaryValue(dict[dictionaryId]));
     }
   }
 
@@ -220,6 +226,11 @@ public class AvroConverters {
     public ByteBuffer convert(Binary binary) {
       return ByteBuffer.wrap(binary.getBytes());
     }
+
+    @Override
+    public ByteBuffer prepareDictionaryValue(ByteBuffer value) {
+      return value.duplicate();
+    }
   }
 
   static final class FieldStringConverter extends BinaryConverter<String> {
@@ -264,13 +275,8 @@ public class AvroConverters {
     public Object convert(Binary binary) {
       try {
         return ctor.newInstance(binary.toStringUsingUTF8());
-      } catch (InstantiationException e) {
-        throw new ParquetDecodingException(
-            "Cannot convert binary to " + stringableName, e);
-      } catch (IllegalAccessException e) {
-        throw new ParquetDecodingException(
-            "Cannot convert binary to " + stringableName, e);
-      } catch (InvocationTargetException e) {
+      } catch (InstantiationException | IllegalAccessException
+          | InvocationTargetException e) {
         throw new ParquetDecodingException(
             "Cannot convert binary to " + stringableName, e);
       }
@@ -308,6 +314,20 @@ public class AvroConverters {
     @Override
     public Object convert(Binary binary) {
       return model.createFixed(null /* reuse */, binary.getBytes(), schema);
+    }
+  }
+
+  static final class FieldUUIDConverter extends BinaryConverter<String> {
+    private final PrimitiveStringifier stringifier;
+
+    public FieldUUIDConverter(ParentValueContainer parent, PrimitiveType type) {
+      super(parent);
+      stringifier = type.stringifier();
+    }
+
+    @Override
+    public String convert(Binary binary) {
+      return stringifier.stringify(binary);
     }
   }
 }

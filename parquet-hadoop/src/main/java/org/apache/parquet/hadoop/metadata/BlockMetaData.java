@@ -32,11 +32,12 @@ public class BlockMetaData {
   private long rowCount;
   private long totalByteSize;
   private String path;
+  private int ordinal;
+  private long rowIndexOffset = -1;
 
   public BlockMetaData() {
   }
-
-
+  
   /**
    * @param path the path to the file containing the data. Or null if same file the metadata was found
    */
@@ -63,6 +64,18 @@ public class BlockMetaData {
    */
   public void setRowCount(long rowCount) {
     this.rowCount = rowCount;
+  }
+
+  /**
+   * @return -1 if the rowIndexOffset for the {@link BlockMetaData} is unavailable else returns the actual rowIndexOffset
+   */
+  public long getRowIndexOffset() { return rowIndexOffset; }
+
+  /**
+   * @param rowIndexOffset the rowIndexOffset to set
+   */
+  public void setRowIndexOffset(long rowIndexOffset) {
+    this.rowIndexOffset = rowIndexOffset;
   }
 
   /**
@@ -102,9 +115,14 @@ public class BlockMetaData {
   public long getStartingPos() {
     return getColumns().get(0).getStartingPos();
   }
+  
   @Override
   public String toString() {
-    return "BlockMetaData{" + rowCount + ", " + totalByteSize + " " + columns + "}";
+    String rowIndexOffsetStr = "";
+    if (rowIndexOffset != -1) {
+      rowIndexOffsetStr = ", rowIndexOffset = " + rowIndexOffset;
+    }
+    return "BlockMetaData{" + rowCount + ", " + totalByteSize + rowIndexOffsetStr + " " + columns + "}";
   }
 
   /**
@@ -116,5 +134,20 @@ public class BlockMetaData {
       totalSize += col.getTotalSize();
     }
     return totalSize;
+  }
+  
+  /**
+   * @return row group ordinal
+   */
+  public int getOrdinal() {
+    return ordinal;
+  }
+
+  /**
+  *
+  * @param ordinal - row group ordinal
+  */
+  public void setOrdinal(int ordinal) {
+    this.ordinal = ordinal;
   }
 }

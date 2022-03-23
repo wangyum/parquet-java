@@ -35,6 +35,14 @@ import org.apache.parquet.io.OutputFile;
  */
 public class AvroParquetWriter<T> extends ParquetWriter<T> {
 
+
+  /**
+   * @param file a file path
+   * @param <T> the Java type of records to read from the file
+   * @return an Avro reader builder
+   * @deprecated will be removed in 2.0.0; use {@link #builder(OutputFile)} instead.
+   */
+  @Deprecated
   public static <T> Builder<T> builder(Path file) {
     return new Builder<T>(file);
   }
@@ -79,8 +87,8 @@ public class AvroParquetWriter<T> extends ParquetWriter<T> {
         DEFAULT_IS_VALIDATING_ENABLED);
   }
 
-  /** Create a new {@link AvroParquetWriter}. The default block size is 50 MB.The default
-   *  page size is 1 MB.  Default compression is no compression. (Inherited from {@link ParquetWriter})
+  /** Create a new {@link AvroParquetWriter}. The default block size is 128 MB. The default
+   *  page size is 1 MB. Default compression is no compression. (Inherited from {@link ParquetWriter})
    *
    * @param file The file name to write to.
    * @param avroSchema The schema to write with.
