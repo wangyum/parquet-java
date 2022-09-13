@@ -71,12 +71,13 @@
     <maven.compiler.target>1.8</maven.compiler.target>
     <github.global.server>github</github.global.server>
     <jackson.groupId>com.fasterxml.jackson.core</jackson.groupId>
+    <jackson.datatype.groupId>com.fasterxml.jackson.datatype</jackson.datatype.groupId>
     <jackson.package>com.fasterxml.jackson</jackson.package>
     <jackson.version>2.13.2</jackson.version>
     <jackson-databind.version>2.13.2.2</jackson-databind.version>
     <japicmp.version>0.14.2</japicmp.version>
     <shade.prefix>shaded.parquet</shade.prefix>
-    <hadoop.version>2.10.1</hadoop.version>
+    <hadoop.version>3.2.3</hadoop.version>
     <parquet.format.version>2.9.0</parquet.format.version>
     <previous.version>1.12.0</previous.version>
     <thrift.executable>thrift</thrift.executable>
@@ -93,7 +94,7 @@
     <fastutil.version>8.4.2</fastutil.version>
     <semver.api.version>0.9.33</semver.api.version>
     <slf4j.version>1.7.22</slf4j.version>
-    <avro.version>1.10.2</avro.version>
+    <avro.version>1.11.1</avro.version>
     <guava.version>27.0.1-jre</guava.version>
     <brotli-codec.version>0.1.1</brotli-codec.version>
     <mockito.version>1.10.19</mockito.version>
@@ -519,6 +520,8 @@
                 change to fix a integer overflow issue.
                 TODO: remove this after Parquet 1.13 release -->
               <exclude>org.apache.parquet.column.values.dictionary.DictionaryValuesWriter#dictionaryByteSize</exclude>
+              <!-- In PARQUET-2158 the return type of PathGlobPattern was changed to be compatible with Hadoop 3 -->
+              <exclude>org.apache.parquet.thrift.projection.deprecated.PathGlobPattern</exclude>
             </excludes>
           </parameter>
         </configuration>
