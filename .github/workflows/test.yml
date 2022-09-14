@@ -43,7 +43,6 @@ jobs:
           bash dev/ci-before_install.sh
       - name: install
         env:
-          CI_TARGET_BRANCH: $GITHUB_HEAD_REF
           MAVEN_OPTS: -XX:+IgnoreUnrecognizedVMOptions
             --add-opens=java.base/java.lang=ALL-UNNAMED
             --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
