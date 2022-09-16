@@ -42,7 +42,6 @@ jobs:
         run: |
           bash dev/ci-before_install.sh
       - name: install
-        env:
         run: |
           mvn install --batch-mode -DskipTests=true -Dmaven.javadoc.skip=true -Dsource.skip=true -Djava.version=${{ matrix.java }}
       - name: verify
