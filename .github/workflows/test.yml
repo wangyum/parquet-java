@@ -55,15 +55,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ '17' ]
         codes: [ 'uncompressed,brotli', 'gzip,snappy' ]
-    name: Build Parquet with JDK ${{ matrix.java }} and ${{ matrix.codes }}
+    name: Build Parquet with JDK 17 and ${{ matrix.codes }}
     steps:
     - uses: actions/checkout@master
-    - name: Set up JDK ${{ matrix.java }}
+    - name: Set up JDK 17
       uses: actions/setup-java@v1
       with:
-        java-version: ${{ matrix.java }}
+        java-version: 17
     - name: before_install
       env:
         CI_TARGET_BRANCH: $GITHUB_HEAD_REF
@@ -88,4 +87,4 @@ jobs:
           --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
       run: |
         mvn install --batch-mode -DskipTests=true -Dmaven.javadoc.skip=true -Dsource.skip=true
-        mvn verify --batch-mode -Pci-test -Djava.version=${{ matrix.java }}
+        mvn verify --batch-mode -Pci-test
