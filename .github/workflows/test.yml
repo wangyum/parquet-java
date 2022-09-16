@@ -77,4 +77,4 @@ jobs:
             --add-opens=java.base/sun.security.action=ALL-UNNAMED
             --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
         run: |
-          mvn verify --batch-mode javadoc:javadoc -Pci-test
+          mvn verify --batch-mode javadoc:javadoc -Pci-test -Djava.version=${{ matrix.java }}
