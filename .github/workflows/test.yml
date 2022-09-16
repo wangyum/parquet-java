@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ '1.8', '11']
+        java: [ '1.8', '11' ]
         codes: [ 'uncompressed,brotli', 'gzip,snappy' ]
     name: Build Parquet with JDK ${{ matrix.java }} and ${{ matrix.codes }}
 
@@ -48,7 +48,7 @@ jobs:
         env:
           TEST_CODECS: ${{ matrix.codes }}
         run: |
-          mvn verify --batch-mode javadoc:javadoc -Pci-test -Djava.version=${{ matrix.java }}
+          mvn verify --batch-mode javadoc:javadoc -Pci-test
 
   JDK-17:
     runs-on: ubuntu-latest
