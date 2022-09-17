@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: [ '1.8', '11' ]
+        java: [ '1.8', '11', '17' ]
         codes: [ 'uncompressed,brotli', 'gzip,snappy' ]
     name: Build Parquet with JDK ${{ matrix.java }} and ${{ matrix.codes }}
 
@@ -47,45 +47,11 @@ jobs:
       - name: verify
         env:
           TEST_CODECS: ${{ matrix.codes }}
+          JAVA_VERION: ${{ matrix.java }}
         run: |
-          mvn verify --batch-mode javadoc:javadoc -Pci-test
-
-  JDK-17:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        codes: [ 'uncompressed,brotli', 'gzip,snappy' ]
-    name: Build Parquet with JDK 17 and ${{ matrix.codes }}
-    steps:
-    - uses: actions/checkout@master
-    - name: Set up JDK 17
-      uses: actions/setup-java@v1
-      with:
-        java-version: 17
-    - name: before_install
-      env:
-        CI_TARGET_BRANCH: $GITHUB_HEAD_REF
-      run: |
-        bash dev/ci-before_install.sh
-    - name: install and verify
-      env:
-        TEST_CODECS: ${{ matrix.codes }}
-        MAVEN_OPTS: -XX:+IgnoreUnrecognizedVMOptions
-          --add-opens java.base/java.lang=ALL-UNNAMED
-          --add-opens java.base/java.lang.invoke=ALL-UNNAMED
-          --add-opens java.base/java.lang.reflect=ALL-UNNAMED
-          --add-opens java.base/java.io=ALL-UNNAMED
-          --add-opens java.base/java.net=ALL-UNNAMED
-          --add-opens java.base/java.nio=ALL-UNNAMED
-          --add-opens java.base/java.util=ALL-UNNAMED
-          --add-opens java.base/java.util.concurrent=ALL-UNNAMED
-          --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED
-          --add-opens java.base/sun.nio.ch=ALL-UNNAMED
-          --add-opens java.base/sun.nio.cs=ALL-UNNAMED
-          --add-opens java.base/sun.security.action=ALL-UNNAMED
-          --add-opens java.base/sun.util.calendar=ALL-UNNAMED
-      run: |
-        echo ${MAVEN_OPTS}
-        mvn install --batch-mode -DskipTests=true -Dmaven.javadoc.skip=true -Dsource.skip=true
-        mvn verify --batch-mode -Pci-test
+          export
+          if [ "$JAVA_VERSION" = "17" ]; then
+              mvn verify --batch-mode -Pci-test
+          else
+              mvn verify --batch-mode javadoc:javadoc -Pci-test
+          fi
